@@ -1915,7 +1915,7 @@ adev_nxvoice_open_input_stream(struct audio_hw_device *dev,
 			       struct audio_stream_in **stream_in,
 			       audio_input_flags_t flags __unused,
 			       const char *address __unused,
-			       audio_source_t source __unused)
+			       audio_source_t source)
 {
 	struct audio_device *adev = (struct audio_device *)dev;
 	struct nxvoice_stream_in *in;
@@ -1983,7 +1983,7 @@ adev_nxvoice_open_input_stream(struct audio_hw_device *dev,
 
 	in->standby = true;
 
-	in->source = AUDIO_SOURCE_DEFAULT;
+	in->source = source;
 	/* strip AUDIO_DEVICE_BIT_IN to allow bitwise comparisons */
 	in->device = devices & ~AUDIO_DEVICE_BIT_IN;
 	in->io_handle = handle;
