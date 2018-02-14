@@ -2196,8 +2196,20 @@ static int adev_open(const struct hw_module_t* module, const char* id,
 	adev->device.get_master_mute = adev_get_master_mute;
 
 	adev->audio_route = audio_route_init(MIXER_CARD, MIXER_XML_PATH);
-	if (!adev->audio_route)
+	if (!adev->audio_route) {
 		ALOGW("%s: mixer file not exist!!", __func__);
+#ifdef QUICKBOOT
+        while (1) {
+            adev->audio_route = audio_route_init(MIXER_CARD, MIXER_XML_PATH);
+            if (!adev->audio_route) {
+                usleep(100000);
+            } else {
+                break;
+            }
+        }
+        ALOGD("mixer file exist");
+#endif
+	}
 	/* adev->cur_route_id initial value is 0 and such that first device
 	 * selection is always applied by select_devices() */
 
