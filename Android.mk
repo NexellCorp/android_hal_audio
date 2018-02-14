@@ -50,6 +50,10 @@ LOCAL_C_INCLUDES += \
 	device/nexell/library/libpowervoice
 endif
 
+ifeq ($(QUICKBOOT), 1)
+LOCAL_CFLAGS += -DQUICKBOOT
+endif
+
 include $(BUILD_SHARED_LIBRARY)
 
 endif
