@@ -46,7 +46,7 @@
 
 #ifdef USES_NXVOICE
 #include <nx-smartvoice.h>
-#include <pvpre.h>
+#include <pvo_wrapper.h>
 #endif
 
 #define MIXER_CARD 0
