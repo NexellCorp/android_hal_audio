@@ -72,7 +72,7 @@
 
 #define MIN_CHANNEL_COUNT		1
 #define MAX_CHANNEL_COUNT		2
-#define DEFAULT_CHANNEL_COUNT		2
+#define DEFAULT_CHANNEL_COUNT	2
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -157,6 +157,9 @@ struct stream_in {
 
 	int64_t last_read_time_us;
 };
+
+bool hfp_enable = false;
+bool output_streaming = false;
 
 #ifdef USES_NXVOICE
 struct nxvoice_stream_in {
@@ -255,6 +258,14 @@ struct pcm_config pcm_config_audio_capture = {
 	.avail_min = 0,
 };
 
+struct pcm_config pcm_config_bt_sco = {
+    .channels = 2,
+    .rate = 16000,
+    .period_size = 64,
+    .period_count = 8,
+    .format = PCM_FORMAT_S16_LE,
+};
+
 #define STRING_TO_ENUM(string) { #string, string }
 
 struct string_to_enum {
@@ -272,6 +283,7 @@ enum {
 	OUT_DEVICE_SPEAKER,
 	OUT_DEVICE_HEADSET,
 	OUT_DEVICE_HEADPHONES,
+	OUT_DEVICE_BT_SCO,
 	OUT_DEVICE_SPEAKER_AND_HEADSET,
 	OUT_DEVICE_TAB_SIZE,           /* number of rows in route_configs[][] */
 	OUT_DEVICE_NONE,
@@ -313,6 +325,10 @@ int get_output_device_id(audio_devices_t device)
 		return OUT_DEVICE_HEADSET;
 	case AUDIO_DEVICE_OUT_WIRED_HEADPHONE:
 		return OUT_DEVICE_HEADPHONES;
+    case AUDIO_DEVICE_OUT_BLUETOOTH_SCO:
+    case AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET:
+    case AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT:
+		return OUT_DEVICE_BT_SCO;
 	default:
 		return OUT_DEVICE_NONE;
 	}
@@ -401,30 +417,39 @@ const struct route_config speaker_and_headphones = {
 	"main-mic",
 };
 
+const struct route_config bluetooth_sco = {
+    "bt-sco-headset",
+    "bt-sco-mic",
+};
+
 const struct route_config * const route_configs[IN_SOURCE_TAB_SIZE]
 [OUT_DEVICE_TAB_SIZE] = {
 	{   /* IN_SOURCE_MIC */
 		&media_speaker,             /* OUT_DEVICE_SPEAKER */
 		&media_headset,             /* OUT_DEVICE_HEADSET */
 		&media_headphones,          /* OUT_DEVICE_HEADPHONES */
+		&bluetooth_sco,             /* OUT_DEVICE_BT_SCO */
 		&speaker_and_headphones     /* OUT_DEVICE_SPEAKER_AND_HEADSET */
 	},
 	{   /* IN_SOURCE_CAMCORDER */
 		&camcorder_speaker,         /* OUT_DEVICE_SPEAKER */
 		&camcorder_headphones,      /* OUT_DEVICE_HEADSET */
 		&camcorder_headphones,      /* OUT_DEVICE_HEADPHONES */
+		&bluetooth_sco,             /* OUT_DEVICE_BT_SCO */
 		&speaker_and_headphones     /* OUT_DEVICE_SPEAKER_AND_HEADSET */
 	},
 	{   /* IN_SOURCE_VOICE_RECOGNITION */
 		&voice_rec_speaker,         /* OUT_DEVICE_SPEAKER */
 		&voice_rec_headset,         /* OUT_DEVICE_HEADSET */
 		&voice_rec_headphones,      /* OUT_DEVICE_HEADPHONES */
+		&bluetooth_sco,             /* OUT_DEVICE_BT_SCO */
 		&speaker_and_headphones     /* OUT_DEVICE_SPEAKER_AND_HEADSET */
 	},
 	{   /* IN_SOURCE_VOICE_COMMUNICATION */
 		&communication_speaker,     /* OUT_DEVICE_SPEAKER */
 		&communication_headset,     /* OUT_DEVICE_HEADSET */
 		&communication_headphones,  /* OUT_DEVICE_HEADPHONES */
+		&bluetooth_sco,             /* OUT_DEVICE_BT_SCO */
 		&speaker_and_headphones     /* OUT_DEVICE_SPEAKER_AND_HEADSET */
 	}
 };
@@ -468,6 +493,9 @@ static void select_devices(struct audio_device *adev)
 			case AUDIO_DEVICE_IN_WIRED_HEADSET & ~AUDIO_DEVICE_BIT_IN:
 				output_device_id = OUT_DEVICE_HEADSET;
 				break;
+			case AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET & ~AUDIO_DEVICE_BIT_IN:
+				output_device_id = OUT_DEVICE_BT_SCO;
+				break;
 			default:
 				output_device_id = OUT_DEVICE_SPEAKER;
 				break;
@@ -497,6 +525,9 @@ static void select_devices(struct audio_device *adev)
 err_route:
 	ALOGV("%s: exit >> %d : %d", __func__, output_device_id, input_source_id);
 }
+
+#include "audio_hfp_client_hw.c"
+
 static struct audio_device *adev = NULL;
 static pthread_mutex_t adev_init_lock;
 static unsigned int audio_device_ref_count;
@@ -579,9 +610,14 @@ int stop_output_stream(struct stream_out *out)
 
 	ALOGV("%s: (%d:%d)", __func__, out->flags, out->devices);
 
+	output_streaming = false;
+
 	if (adev->out_device)
 		adev->out_device = AUDIO_DEVICE_NONE;
 		select_devices(adev);
+
+	if (hfp_enable)
+		start_bt_sco();
 
 	return ret;
 }
@@ -635,6 +671,8 @@ int start_output_stream(struct stream_out *out)
 			goto error_open;
 		}
 	}
+
+	output_streaming = true;
 
 	ALOGV("%s: exit", __func__);
 	return ret;
@@ -934,6 +972,11 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
 	struct stream_out *out = (struct stream_out *)stream;
 	struct audio_device *adev = out->dev;
 	ssize_t ret = 0;
+
+	if (hfp_enable) {
+		ALOGV("%s: Skip output streaming for operating hfp sco", __func__);
+		return bytes;
+	}
 
 	lock_output_stream(out);
 	if (out->standby) {
@@ -1443,6 +1486,22 @@ static int adev_set_parameters(struct audio_hw_device *dev,
 	parms = str_parms_create_str(kv_pairs);
 	if (status != 0) {
 		goto done;
+	}
+
+	ret = str_parms_get_str(parms, "hfp_set_sampling_rate", value, sizeof(value));
+	if (ret >= 0)
+		pcm_config_bt_sco.rate = atoi(value);
+
+	ret = str_parms_get_str(parms, "hfp_enable", value, sizeof(value));
+	if (ret >= 0) {
+		if (strcmp(value, "true") == 0) {
+			hfp_enable = true;
+			if (!output_streaming)
+				start_bt_sco();
+		} else {
+			hfp_enable = false;
+			stop_bt_sco();
+		}
 	}
 
 done:
