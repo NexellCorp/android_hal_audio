@@ -46,7 +46,7 @@
 
 #ifdef USES_NXVOICE
 #include <nx-smartvoice.h>
-#include <pvo_wrapper.h>
+#include <ecnr_wrapper.h>
 #endif
 
 #define MIXER_CARD 0
@@ -2104,7 +2104,6 @@ static int adev_get_master_mute(struct audio_hw_device *dev __unused,
 #ifdef USES_NXVOICE
 static bool nx_voice_prop_init(struct nx_smartvoice_config *c)
 {
-	int len;
 	char buf[PROPERTY_VALUE_MAX];
 	int val;
 
@@ -2116,25 +2115,9 @@ static bool nx_voice_prop_init(struct nx_smartvoice_config *c)
 
 	ALOGI("Use NXVoice!!!");
 
-	len = property_get(VOICE_VENDOR_PROP_KEY, buf, "pvo");
-	if (len <= 0) {
-		ALOGE("%s: failed to property_get for %s\n", __func__,
-		      VOICE_VENDOR_PROP_KEY);
-		return false;
-	}
-	if (strncmp(buf, "pvo", 3) == 0) {
-		c->cb.init = PVPRE_Init;
-		c->cb.process = PVPRE_Process_4ch;
-		c->cb.post_process = PoVoGateSource;
-		c->cb.deinit = PVPRE_Close;
-	} else {
-		ALOGE("%s: vendor %s not supported\n", __func__, buf);
-		ALOGE("Currently only pvo is supported\n");
-		return false;
-	}
-
 	c->use_feedback = property_get_int32(USE_FEEDBACK_PROP_KEY, 0);
 	c->pdm_devnum = property_get_int32(PDM_DEVNUM_PROP_KEY, 2);
+	c->pdm_devnum2 = c->pdm_devnum + 1;
 	c->ref_devnum = property_get_int32(REF_DEVNUM_PROP_KEY, 1);
 	if (c->use_feedback)
 		c->feedback_devnum =
@@ -2147,6 +2130,14 @@ static bool nx_voice_prop_init(struct nx_smartvoice_config *c)
 	c->trigger_done_ret_value = property_get_int32(CHECK_TRIGGER_PROP_KEY, 1);
 	c->pass_after_trigger = property_get_bool(PASS_AFTER_TRIGGER_PROP_KEY, 0);
 	c->verbose = property_get_bool(NXVOICE_VERBOSE_PROP_KEY, 0);
+
+	c->cb.init = ECNR_Init;
+	if (c->pdm_chnum == 4)
+		c->cb.process = ECNR_Process_4ch;
+	else
+		c->cb.process = ECNR_Process_2ch;
+	c->cb.post_process = ECNR_PostProcess;
+	c->cb.deinit = ECNR_DeInit;
 
 	ALOGI("NXVoice Config");
 	ALOGI("use_feedback: %d", c->use_feedback);

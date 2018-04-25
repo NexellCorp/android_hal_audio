@@ -42,12 +42,34 @@ LOCAL_C_INCLUDES += \
 ifeq ($(strip $(BOARD_USES_NXVOICE)),true)
 LOCAL_CFLAGS += -DUSES_NXVOICE
 LOCAL_SHARED_LIBRARIES += \
-	libnxvoice \
+	libnxvoice
+LOCAL_C_INCLUDES += \
+	device/nexell/library/include \
+	device/nexell/library/nx-smartvoice
+endif
+
+ifneq ($(filter pvo,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	../../../../device/nexell/library/nx-smartvoice/pvo.c
+LOCAL_C_INCLUDES += \
+	device/nexell/library/libpowervoice
+zLOCAL_SHARED_LIBRARIES += \
 	libpvo \
 	libpovosource
+endif
+
+ifneq ($(filter mwsr,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	../../../../device/nexell/library/nx-smartvoice/mwsr.c
 LOCAL_C_INCLUDES += \
-	device/nexell/library/nx-smartvoice \
-	device/nexell/library/libpowervoice
+	device/nexell/library/libmwsr
+LOCAL_SHARED_LIBRARIES += \
+	libmwsr
+endif
+
+ifneq ($(filter bypass,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	../../../../device/nexell/library/nx-smartvoice/bypass.c
 endif
 
 ifeq ($(QUICKBOOT), 1)
