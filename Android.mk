@@ -49,27 +49,18 @@ LOCAL_C_INCLUDES += \
 endif
 
 ifneq ($(filter pvo,$(SVOICE_ECNR_VENDOR)),)
-LOCAL_SRC_FILES += \
-	../../../../device/nexell/library/nx-smartvoice/pvo.c
-LOCAL_C_INCLUDES += \
-	device/nexell/library/libpowervoice
 zLOCAL_SHARED_LIBRARIES += \
 	libpvo \
 	libpovosource
+LOCAL_C_INCLUDES += \
+	device/nexell/library/libpowervoice
 endif
 
 ifneq ($(filter mwsr,$(SVOICE_ECNR_VENDOR)),)
-LOCAL_SRC_FILES += \
-	../../../../device/nexell/library/nx-smartvoice/mwsr.c
-LOCAL_C_INCLUDES += \
-	device/nexell/library/libmwsr
 LOCAL_SHARED_LIBRARIES += \
 	libmwsr
-endif
-
-ifneq ($(filter bypass,$(SVOICE_ECNR_VENDOR)),)
-LOCAL_SRC_FILES += \
-	../../../../device/nexell/library/nx-smartvoice/bypass.c
+LOCAL_C_INCLUDES += \
+	device/nexell/library/libmwsr
 endif
 
 ifeq ($(QUICKBOOT), 1)
