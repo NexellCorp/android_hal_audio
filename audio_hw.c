@@ -2131,14 +2131,6 @@ static bool nx_voice_prop_init(struct nx_smartvoice_config *c)
 	c->pass_after_trigger = property_get_bool(PASS_AFTER_TRIGGER_PROP_KEY, 0);
 	c->verbose = property_get_bool(NXVOICE_VERBOSE_PROP_KEY, 0);
 
-	c->cb.init = ECNR_Init;
-	if (c->pdm_chnum == 4)
-		c->cb.process = ECNR_Process_4ch;
-	else
-		c->cb.process = ECNR_Process_2ch;
-	c->cb.post_process = ECNR_PostProcess;
-	c->cb.deinit = ECNR_DeInit;
-
 	ALOGI("NXVoice Config");
 	ALOGI("use_feedback: %d", c->use_feedback);
 	ALOGI("pdm_devnum: %d", c->pdm_devnum);
