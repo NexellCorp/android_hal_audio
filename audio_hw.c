@@ -88,6 +88,7 @@ static const char *FEEDBACK_DEVNUM_PROP_KEY = "persist.nv.feedback_devnum";
 static const char *PDM_CHNUM_PROP_KEY = "persist.nv.pdm_chnum";
 static const char *PDM_GAIN_PROP_KEY = "persist.nv.pdm_gain";
 static const char *RESAMPLE_OUT_CHNUM_PROP_KEY = "persist.nv.resample_out_chnum";
+static const char *SAMPLE_COUNT_PROP_KEY = "persist.nv.sample_count";
 static const char *CHECK_TRIGGER_PROP_KEY = "persist.nv.check_trigger";
 static const char *TRIGGER_DONE_RET_VALUE_PROP_KEY = "persist.nv.trigger_done_ret";
 static const char *PASS_AFTER_TRIGGER_PROP_KEY = "persist.nv.pass_after_trigger";
@@ -2126,6 +2127,7 @@ static bool nx_voice_prop_init(struct nx_smartvoice_config *c)
 	c->pdm_gain = property_get_int32(PDM_GAIN_PROP_KEY, 0);
 	c->ref_resample_out_chnum =
 		property_get_int32(RESAMPLE_OUT_CHNUM_PROP_KEY, 1);
+	c->sample_count = property_get_int32(SAMPLE_COUNT_PROP_KEY, 256);
 	c->check_trigger = property_get_bool(CHECK_TRIGGER_PROP_KEY, 0);
 	c->trigger_done_ret_value = property_get_int32(CHECK_TRIGGER_PROP_KEY, 1);
 	c->pass_after_trigger = property_get_bool(PASS_AFTER_TRIGGER_PROP_KEY, 0);
