@@ -18,49 +18,52 @@
 #
 # The format of the name is audio.<type>.<hardware/etc>.so where the only
 
-ifeq ($(strip $(BOARD_USES_AUDIO_N)),true)
-
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 
 LOCAL_MODULE_RELATIVE_PATH := hw
-LOCAL_MODULE := audio.primary.$(TARGET_BOOTLOADER_BOARD_NAME)
+LOCAL_MODULE := audio.primary.$(TARGET_BOARD_PLATFORM)
+LOCAL_VENDOR_MODULE := true
 LOCAL_SRC_FILES := \
-	audio_hw.c
+    audio_hw.c
 LOCAL_SHARED_LIBRARIES := \
-	liblog \
-	libcutils \
-	libtinyalsa \
-	libaudioroute \
-	libexpat
+    liblog \
+    libcutils \
+    libtinyalsa \
+    libaudioroute \
+    libexpat
 LOCAL_C_INCLUDES += \
-	external/tinyalsa/include \
-	external/expat/lib \
-	$(call include-path-for, audio-route) \
-	$(call include-path-for, audio-effects)
+    external/tinyalsa/include \
+    external/expat/lib \
+    hardware/libhardware/include \
+    system/core/libsystem/include \
+    system/media/audio/include \
+    system/core/libutils/include \
+    $(call include-path-for, audio-route) \
+    $(call include-path-for, audio-effects)
 ifeq ($(strip $(BOARD_USES_NXVOICE)),true)
 LOCAL_CFLAGS += -DUSES_NXVOICE
 LOCAL_SHARED_LIBRARIES += \
-	libnxvoice
+    libnxvoice
 LOCAL_C_INCLUDES += \
-	device/nexell/library/include \
-	device/nexell/library/nx-smartvoice
+    device/nexell/library/include \
+    device/nexell/library/nx-smartvoice
 endif
 
 ifneq ($(filter pvo,$(SVOICE_ECNR_VENDOR)),)
 zLOCAL_SHARED_LIBRARIES += \
-	libpvo \
-	libpovosource
+    libpvo \
+    libpovosource
 LOCAL_C_INCLUDES += \
-	device/nexell/library/libpowervoice
+    device/nexell/library/libpowervoice
 endif
 
 ifneq ($(filter mwsr,$(SVOICE_ECNR_VENDOR)),)
 LOCAL_SHARED_LIBRARIES += \
-	libmwsr
+    libmwsr
 LOCAL_C_INCLUDES += \
-	device/nexell/library/libmwsr
+    device/nexell/library/libmwsr
 endif
 
 ifeq ($(QUICKBOOT), 1)
@@ -68,5 +71,3 @@ LOCAL_CFLAGS += -DQUICKBOOT
 endif
 
 include $(BUILD_SHARED_LIBRARY)
-
-endif
