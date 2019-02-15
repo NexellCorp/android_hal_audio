@@ -262,7 +262,7 @@ struct pcm_config pcm_config_audio_capture = {
 struct pcm_config pcm_config_bt_sco = {
     .channels = 2,
     .rate = 16000,
-    .period_size = 64,
+    .period_size = 128,
     .period_count = 8,
     .format = PCM_FORMAT_S16_LE,
 };
@@ -618,7 +618,7 @@ int stop_output_stream(struct stream_out *out)
 		select_devices(adev);
 
 	if (hfp_enable)
-		start_bt_sco();
+		start_bt_sco(adev->snd_card);
 
 	return ret;
 }
@@ -1498,7 +1498,7 @@ static int adev_set_parameters(struct audio_hw_device *dev,
 		if (strcmp(value, "true") == 0) {
 			hfp_enable = true;
 			if (!output_streaming)
-				start_bt_sco();
+				start_bt_sco(adev->snd_card);
 		} else {
 			hfp_enable = false;
 			stop_bt_sco();
