@@ -40,16 +40,16 @@ static void* thread_voice()
 
 	ALOGD("in %s", __func__);
 
-	size = config.period_size * config.period_count;
+	size = config.period_size * 2 * config.channels;
 
-	sco_out = pcm_open(0, 2, PCM_OUT | PCM_MONOTONIC, &config);
+	sco_out = pcm_open(SND_BT_SCO_CARD_ID, SND_BT_SCO_DEVICE_ID, PCM_OUT | PCM_MONOTONIC, &config);
 	if (!sco_out || !pcm_is_ready(sco_out)) {
 		ALOGE("%s: unable to open sco_out PCM device(%s)",
 		      __func__, pcm_get_error(sco_out));
 		goto exit;
 	}
 
-	voice_in = pcm_open(0, 0, PCM_IN | PCM_MONOTONIC, &config);
+	voice_in = pcm_open(SND_BT_CARD_ID, SND_BT_DEVICE_ID, PCM_IN | PCM_MONOTONIC, &config);
 	if (!voice_in || !pcm_is_ready(voice_in)) {
 		ALOGE("%s: unable to open voice_in PCM device(%s)",
 		      __func__, pcm_get_error(voice_in));
@@ -104,14 +104,15 @@ static void* thread_sco()
 
 	ALOGD("in %s", __func__);
 
-	size = config.period_size * config.period_count;
-	voice_out = pcm_open(0, 0, PCM_OUT | PCM_MONOTONIC, &config);
+	size = config.period_size * 2 * config.channels;
+
+	voice_out = pcm_open(SND_BT_CARD_ID, SND_BT_DEVICE_ID, PCM_OUT | PCM_MONOTONIC, &config);
 	if (!voice_out || !pcm_is_ready(voice_out)) {
 		ALOGE("%s: unable to open voice_out PCM device(%s)",
 		      __func__, pcm_get_error(voice_out));
 		goto exit;
 	}
-	sco_in = pcm_open(0, 2, PCM_IN | PCM_MONOTONIC, &config);
+	sco_in = pcm_open(SND_BT_SCO_CARD_ID, SND_BT_SCO_DEVICE_ID, PCM_IN | PCM_MONOTONIC, &config);
 	if (!sco_in || !pcm_is_ready(sco_in)) {
 		ALOGE("%s: unable to open sco_in PCM device(%s)",
 		      __func__, pcm_get_error(sco_in));
