@@ -618,7 +618,7 @@ int stop_output_stream(struct stream_out *out)
 		select_devices(adev);
 
 	if (hfp_enable)
-		start_bt_sco(adev->snd_card);
+		start_bt_sco();
 
 	return ret;
 }
