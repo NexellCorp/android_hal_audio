@@ -260,7 +260,7 @@ struct pcm_config pcm_config_audio_capture = {
 };
 
 struct pcm_config pcm_config_bt_sco = {
-    .channels = 2,
+    .channels = 1,
     .rate = 16000,
     .period_size = 128,
     .period_count = 8,
