@@ -65,6 +65,21 @@ ifeq ($(QUICKBOOT), 1)
 LOCAL_CFLAGS += -DQUICKBOOT
 endif
 
+ifeq ($(strip $(BOARD_USES_ECNR)),true)
+LOCAL_CFLAGS += -DUSES_ECNR
+LOCAL_SRC_FILES += \
+	vcp/vcp_clients.c \
+	vcp/vcpCICmdImpl.c \
+	vcp/vcpCIProtocol.c \
+	vcp/rs232.c \
+	vcp/tcpip.c
+LOCAL_STATIC_LIBRARIES += \
+	libvcp
+LOCAL_C_INCLUDES += \
+	device/nexell/library/libvcp \
+	$(LOCAL_PATH)/vcp
+endif
+
 SND_BT_CARD_ID ?= 0
 SND_BT_DEVICE_ID ?= 0
 SND_BT_SCO_CARD_ID ?= 0
