@@ -28,6 +28,7 @@ LOCAL_VENDOR_MODULE := true
 LOCAL_SRC_FILES := \
     audio_hw.c
 LOCAL_SHARED_LIBRARIES := \
+    libaudioutils \
     liblog \
     libcutils \
     libtinyalsa \
