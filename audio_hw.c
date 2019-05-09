@@ -42,6 +42,8 @@
 
 #include <tinyalsa/asoundlib.h>
 #include <audio_route/audio_route.h>
+#include <audio_utils/clock.h>
+#include <audio_utils/ErrorLog.h>
 
 #include <pthread.h>
 
@@ -70,6 +72,11 @@
 
 #define LOW_LATENCY_CAPTURE_SAMPLE_RATE 48000
 #define LOW_LATENCY_CAPTURE_PERIOD_SIZE 240
+
+#define MMAP_PERIOD_SIZE (DEFAULT_OUTPUT_SAMPLING_RATE/1000)
+#define MMAP_PERIOD_COUNT_MIN 32
+#define MMAP_PERIOD_COUNT_MAX 512
+#define MMAP_PERIOD_COUNT_DEFAULT (MMAP_PERIOD_COUNT_MAX)
 
 #define MIN_CHANNEL_COUNT       1
 #define MAX_CHANNEL_COUNT       2
@@ -130,7 +137,10 @@ struct stream_out {
     uint64_t written; /* total frames written, not cleared when entering standby */
     audio_io_handle_t handle;
 
+    int playback_started;
+
     struct audio_device *dev;
+    error_log_t *error_log;
 
     int64_t last_write_time_us;
 };
@@ -145,17 +155,23 @@ struct stream_in {
     int standby;
     int pcm_device_id;
 
+    unsigned int sample_rate;
+
     audio_channel_mask_t channel_mask;
     audio_format_t format;
     audio_devices_t device;
     audio_input_flags_t flags;
 
     int64_t frames_read; /* total frames read, not cleared when entering standby */
+    int64_t frames_muted; /* total frames muted, not cleared when entering standby */
     audio_io_handle_t capture_handle;
 
     int source;
 
+    int capture_started;
+
     struct audio_device *dev;
+    error_log_t *error_log;
 
     int64_t last_read_time_us;
 };
@@ -252,12 +268,38 @@ struct pcm_config pcm_config_hdmi = {
     .avail_min = DEFAULT_OUTPUT_PERIOD_SIZE / 4,
 };
 
+struct pcm_config pcm_config_mmap_playback = {
+    .channels = DEFAULT_CHANNEL_COUNT,
+    .rate = DEFAULT_OUTPUT_SAMPLING_RATE,
+    .period_size = MMAP_PERIOD_SIZE,
+    .period_count = MMAP_PERIOD_COUNT_DEFAULT,
+    .format = PCM_FORMAT_S16_LE,
+    .start_threshold = MMAP_PERIOD_SIZE*8,
+    .stop_threshold = INT32_MAX,
+    .silence_threshold = 0,
+    .silence_size = 0,
+    .avail_min = MMAP_PERIOD_SIZE, //1 ms
+};
+
 struct pcm_config pcm_config_audio_capture = {
     .channels = DEFAULT_CHANNEL_COUNT,
     .period_count = AUDIO_CAPTURE_PERIOD_COUNT,
     .format = PCM_FORMAT_S16_LE,
     .stop_threshold = INT_MAX,
     .avail_min = 0,
+};
+
+struct pcm_config pcm_config_mmap_capture = {
+    .channels = DEFAULT_CHANNEL_COUNT,
+    .rate = DEFAULT_OUTPUT_SAMPLING_RATE,
+    .period_size = MMAP_PERIOD_SIZE,
+    .period_count = MMAP_PERIOD_COUNT_DEFAULT,
+    .format = PCM_FORMAT_S16_LE,
+    .start_threshold = 0,
+    .stop_threshold = INT_MAX,
+    .silence_threshold = 0,
+    .silence_size = 0,
+    .avail_min = MMAP_PERIOD_SIZE, //1 ms
 };
 
 struct pcm_config pcm_config_bt_sco = {
@@ -555,7 +597,6 @@ int start_input_stream(struct stream_in *in)
 {
     int ret = 0;
     struct audio_device *adev = in->dev;
-    unsigned int flags = PCM_IN | PCM_MONOTONIC;
 
     ALOGV("%s: (%d:%d)", __func__, in->flags, in->device);
 
@@ -571,19 +612,33 @@ int start_input_stream(struct stream_in *in)
           __func__, in->config.channels, in->config.rate,
           in->config.period_size, in->config.period_count, in->config.format);
 
-    while (1) {
-        in->pcm = pcm_open(adev->snd_card, in->pcm_device_id,
-                   flags, &in->config);
+    if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ) {
         if (in->pcm == NULL || !pcm_is_ready(in->pcm)) {
             ALOGE("%s: %s", __func__, pcm_get_error(in->pcm));
-            if (in->pcm != NULL) {
-                pcm_close(in->pcm);
-                in->pcm = NULL;
-            }
-            ret = -EIO;
             goto error_open;
         }
-        break;
+        ret = pcm_start(in->pcm);
+        if (ret < 0) {
+            ALOGE("%s: MMAP pcm_start failed ret %d", __func__, ret);
+            goto error_open;
+        }
+    } else {
+        unsigned int flags = PCM_OUT | PCM_MONOTONIC;
+
+        while (1) {
+            in->pcm = pcm_open(adev->snd_card, in->pcm_device_id,
+                       flags, &in->config);
+            if (in->pcm == NULL || !pcm_is_ready(in->pcm)) {
+                ALOGE("%s: %s", __func__, pcm_get_error(in->pcm));
+                if (in->pcm != NULL) {
+                    pcm_close(in->pcm);
+                    in->pcm = NULL;
+                 }
+                 ret = -EIO;
+                 goto error_open;
+            }
+            break;
+        }
     }
     ret = pcm_prepare(in->pcm);
     if (ret < 0) {
@@ -627,8 +682,6 @@ int start_output_stream(struct stream_out *out)
 {
     int ret = 0;
     struct audio_device *adev = out->dev;
-    unsigned int flags = PCM_OUT;
-    flags |= PCM_MONOTONIC;
 
     ALOGV("%s: (%d:%d)", __func__, out->flags, out->devices);
 
@@ -649,30 +702,43 @@ int start_output_stream(struct stream_out *out)
         out->pcm = NULL;
     }
 
-    while (1) {
-        out->pcm = pcm_open(adev->snd_card, out->pcm_device_id,
-                    flags, &out->config);
+    if (out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) {
         if (out->pcm == NULL || !pcm_is_ready(out->pcm)) {
             ALOGE("%s: %s", __func__, pcm_get_error(out->pcm));
-            if (out->pcm != NULL) {
+            goto error_open;
+        }
+        ret = pcm_start(out->pcm);
+        if (ret < 0) {
+            ALOGE("%s: MMAP pcm_start failed ret %d", __func__, ret);
+            goto error_open;
+        }
+    } else {
+        unsigned int flags = PCM_OUT | PCM_MONOTONIC;
+
+        while (1) {
+            out->pcm = pcm_open(adev->snd_card, out->pcm_device_id,
+                        flags, &out->config);
+            if (out->pcm == NULL || !pcm_is_ready(out->pcm)) {
+                ALOGE("%s: %s", __func__, pcm_get_error(out->pcm));
+                if (out->pcm != NULL) {
+                    pcm_close(out->pcm);
+                    out->pcm = NULL;
+                }
+                ret = -EIO;
+                goto error_open;
+            }
+            break;
+        }
+        if (pcm_is_ready(out->pcm)) {
+            ret = pcm_prepare(out->pcm);
+            if (ret < 0) {
+                ALOGE("%s: pcm_prepare returned %d", __func__, ret);
                 pcm_close(out->pcm);
                 out->pcm = NULL;
+                goto error_open;
             }
-            ret = -EIO;
-            goto error_open;
-        }
-        break;
-    }
-    if (pcm_is_ready(out->pcm)) {
-        ret = pcm_prepare(out->pcm);
-        if (ret < 0) {
-            ALOGE("%s: pcm_prepare returned %d", __func__, ret);
-            pcm_close(out->pcm);
-            out->pcm = NULL;
-            goto error_open;
         }
     }
-
     output_streaming = true;
 
     ALOGV("%s: exit", __func__);
@@ -803,6 +869,7 @@ static int out_standby(struct audio_stream *stream)
 {
     struct stream_out *out = (struct stream_out *)stream;
     struct audio_device *adev = out->dev;
+    bool do_stop = true;
 
     ALOGV("%s: enter", __func__);
     lock_output_stream(out);
@@ -813,7 +880,12 @@ static int out_standby(struct audio_stream *stream)
             pcm_close(out->pcm);
             out->pcm = NULL;
         }
-        stop_output_stream(out);
+        if (out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) {
+            do_stop = out->playback_started;
+            out->playback_started = false;
+        }
+        if (do_stop)
+            stop_output_stream(out);
         pthread_mutex_unlock(&adev->lock);
     }
     pthread_mutex_unlock(&out->lock);
@@ -823,7 +895,22 @@ static int out_standby(struct audio_stream *stream)
 
 static int out_dump(const struct audio_stream *stream __unused, int fd __unused)
 {
-    ALOGV("%s", __func__);
+    struct stream_out *out = (struct stream_out *)stream;
+
+    // We try to get the lock for consistency,
+    // but it isn't necessary for these variables.
+    // If we're not in standby, we may be blocked on a write.
+    const bool locked = (pthread_mutex_trylock(&out->lock) == 0);
+    dprintf(fd, "      Standby: %s\n", out->standby ? "yes" : "no");
+    dprintf(fd, "      Frames written: %lld\n", (long long)out->written);
+
+    if (locked) {
+        pthread_mutex_unlock(&out->lock);
+    }
+
+    // dump error info
+    (void)error_log_dump(
+            out->error_log, fd, "      " /* prefix */, 0 /* lines */, 0 /* limit_ns */);
 
     return 0;
 }
@@ -979,6 +1066,10 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
     }
 
     lock_output_stream(out);
+
+    if (out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ)
+        goto exit;
+
     if (out->standby) {
         out->standby = false;
         pthread_mutex_lock(&adev->lock);
@@ -1098,15 +1189,165 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
     return ret;
 }
 
-static int __unused out_start(const struct audio_stream_out* stream __unused)
+static int out_start(const struct audio_stream_out* stream __unused)
 {
+    struct stream_out *out = (struct stream_out *)stream;
+    struct audio_device *adev = out->dev;
+    int ret = -ENOSYS;
 
-    return -ENOSYS;
+    pthread_mutex_lock(&adev->lock);
+    if (out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ && !out->standby &&
+            out->playback_started && out->pcm != NULL) {
+        ret = start_output_stream(out);
+        if (ret == 0)
+            out->playback_started = true;
+    }
+    pthread_mutex_unlock(&adev->lock);
+    return ret;
 }
 
-static int __unused out_stop(const struct audio_stream_out* stream __unused)
+static int out_stop(const struct audio_stream_out* stream __unused)
 {
-    return -ENOSYS;
+    struct stream_out *out = (struct stream_out *)stream;
+    struct audio_device *adev = out->dev;
+    int ret = -ENOSYS;
+
+    pthread_mutex_lock(&adev->lock);
+    if (out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ && !out->standby &&
+            out->playback_started && out->pcm != NULL) {
+        pcm_stop(out->pcm);
+        ret = stop_output_stream(out);
+        out->playback_started = false;
+    }
+    pthread_mutex_unlock(&adev->lock);
+    return ret;
+}
+
+/*
+ * Modify config->period_count based on min_size_frames
+ */
+static void adjust_mmap_period_count(struct pcm_config *config, int32_t min_size_frames)
+{
+    int periodCountRequested = (min_size_frames + config->period_size - 1)
+                               / config->period_size;
+    int periodCount = MMAP_PERIOD_COUNT_MIN;
+
+    ALOGV("%s original config.period_size = %d config.period_count = %d",
+          __func__, config->period_size, config->period_count);
+
+    while (periodCount < periodCountRequested && (periodCount * 2) < MMAP_PERIOD_COUNT_MAX) {
+        periodCount *= 2;
+    }
+    config->period_count = periodCount;
+
+    ALOGV("%s requested config.period_count = %d", __func__, config->period_count);
+}
+
+static int out_create_mmap_buffer(const struct audio_stream_out *stream,
+                                  int32_t min_size_frames,
+                                  struct audio_mmap_buffer_info *info)
+{
+    struct stream_out *out = (struct stream_out *)stream;
+    struct audio_device *adev = out->dev;
+    int ret = 0;
+    unsigned int offset1;
+    unsigned int frames1;
+    const char *step = "";
+    uint32_t buffer_size;
+
+    ALOGE("%s", __func__);
+    lock_output_stream(out);
+    pthread_mutex_lock(&adev->lock);
+
+    if (info == NULL || min_size_frames == 0) {
+        ALOGE("%s: info = %p, min_size_frames = %d", __func__, info, min_size_frames);
+        ret = -EINVAL;
+        goto exit;
+    }
+    if (((out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) == 0) || !out->standby) {
+        ALOGE("%s: outflags = %d, standby = %d", __func__, out->flags, out->standby);
+        ret = -ENOSYS;
+        goto exit;
+    }
+
+    adjust_mmap_period_count(&out->config, min_size_frames);
+
+    ALOGV("%s: Opening PCM device card_id(%d) device_id(%d), channels %d",
+          __func__, adev->snd_card, out->pcm_device_id, out->config.channels);
+    if (out->pcm) {
+        pcm_close(out->pcm);
+        out->pcm = NULL;
+    }
+    out->pcm = pcm_open(adev->snd_card, out->pcm_device_id,
+                        (PCM_OUT | PCM_MMAP | PCM_NOIRQ | PCM_MONOTONIC), &out->config);
+    if (out->pcm == NULL || !pcm_is_ready(out->pcm)) {
+        step = "open";
+        ret = -ENODEV;
+        goto exit;
+    }
+    ret = pcm_mmap_begin(out->pcm, &info->shared_memory_address, &offset1, &frames1);
+    if (ret < 0)  {
+        step = "begin";
+        goto exit;
+    }
+    info->buffer_size_frames = pcm_get_buffer_size(out->pcm);
+    buffer_size = pcm_frames_to_bytes(out->pcm, info->buffer_size_frames);
+    info->burst_size_frames = out->config.period_size;
+    memset(info->shared_memory_address, 0, buffer_size);
+
+    ret = pcm_mmap_commit(out->pcm, 0, MMAP_PERIOD_SIZE);
+    if (ret < 0) {
+        step = "commit";
+        goto exit;
+    }
+
+    out->standby = false;
+    ret = 0;
+
+    ALOGV("%s: got mmap buffer address %p info->buffer_size_frames %d",
+          __func__, info->shared_memory_address, info->buffer_size_frames);
+
+exit:
+    if (ret != 0) {
+        if (out->pcm == NULL) {
+            ALOGE("%s: %s - %d", __func__, step, ret);
+        } else {
+            ALOGE("%s: %s %s", __func__, step, pcm_get_error(out->pcm));
+            pcm_close(out->pcm);
+            out->pcm = NULL;
+        }
+    }
+    pthread_mutex_unlock(&adev->lock);
+    pthread_mutex_unlock(&out->lock);
+    return ret;
+}
+
+static int out_get_mmap_position(const struct audio_stream_out *stream,
+                                  struct audio_mmap_position *position)
+{
+    int ret = 0;
+    struct stream_out *out = (struct stream_out *)stream;
+    ALOGE("%s", __func__);
+    if (position == NULL) {
+        return -EINVAL;
+    }
+    lock_output_stream(out);
+    if (((out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) == 0) ||
+        out->pcm == NULL) {
+        ret = -ENOSYS;
+        goto exit;
+    }
+
+    struct timespec ts = { 0, 0 };
+    ret = pcm_mmap_get_hw_ptr(out->pcm, (unsigned int *)&position->position_frames, &ts);
+    if (ret < 0) {
+        ALOGE("%s: %s", __func__, pcm_get_error(out->pcm));
+        goto exit;
+    }
+    position->time_nanoseconds = audio_utils_ns_from_timespec(&ts);
+exit:
+    pthread_mutex_unlock(&out->lock);
+    return ret;
 }
 
 /* audio_stream common in api*/
@@ -1158,6 +1399,7 @@ static int in_standby(struct audio_stream *stream)
     struct stream_in *in = (struct stream_in *)stream;
     struct audio_device *adev = in->dev;
     int status = 0;
+    bool do_stop = true;
 
     ALOGV("%s: enter", __func__);
 
@@ -1166,11 +1408,16 @@ static int in_standby(struct audio_stream *stream)
     if (!in->standby) {
         pthread_mutex_lock(&adev->lock);
         in->standby = true;
+        if (in->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) {
+            do_stop = in->capture_started;
+            in->capture_started = false;
+        }
         if (in->pcm) {
             pcm_close(in->pcm);
             in->pcm = NULL;
         }
-        status = stop_input_stream(in);
+        if (do_stop)
+            status = stop_input_stream(in);
         pthread_mutex_unlock(&adev->lock);
     }
     pthread_mutex_unlock(&in->lock);
@@ -1180,8 +1427,23 @@ static int in_standby(struct audio_stream *stream)
 
 static int in_dump(const struct audio_stream *stream __unused, int fd __unused)
 {
-    ALOGV("%s", __func__);
+   struct stream_in *in = (struct stream_in *)stream;
 
+    // We try to get the lock for consistency,
+    // but it isn't necessary for these variables.
+    // If we're not in standby, we may be blocked on a read.
+    const bool locked = (pthread_mutex_trylock(&in->lock) == 0);
+    dprintf(fd, "      Standby: %s\n", in->standby ? "yes" : "no");
+    dprintf(fd, "      Frames read: %lld\n", (long long)in->frames_read);
+    dprintf(fd, "      Frames muted: %lld\n", (long long)in->frames_muted);
+
+    if (locked) {
+        pthread_mutex_unlock(&in->lock);
+    }
+
+    // dump error info
+    (void)error_log_dump(
+            in->error_log, fd, "      " /* prefix */, 0 /* lines */, 0 /* limit_ns */);
     return 0;
 }
 
@@ -1297,8 +1559,13 @@ static int in_remove_audio_effect(const struct audio_stream *stream __unused,
 
 /* audio_stream_in api*/
 
-static int in_set_gain(struct audio_stream_in *stream __unused, float gain __unused)
+static int in_set_gain(struct audio_stream_in *stream, float gain __unused)
 {
+    struct stream_in *in = (struct stream_in *)stream;
+
+    if (in->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ)
+        return -ENOSYS;
+
     return 0;
 }
 
@@ -1310,6 +1577,11 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
     int ret = -1;
 
     lock_input_stream(in);
+
+    if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ) {
+        ret = -ENOSYS;
+        goto exit;
+    }
 
     if (in->standby) {
         pthread_mutex_lock(&adev->lock);
@@ -1379,14 +1651,148 @@ static int in_get_capture_position(const struct audio_stream_in *stream,
     return ret;
 }
 
-static int __unused in_start(const struct audio_stream_in* stream __unused)
+static int in_start(const struct audio_stream_in* stream)
 {
-    return -ENOSYS;
+    struct stream_in *in = (struct stream_in *)stream;
+    struct audio_device *adev = in->dev;
+    int ret = -ENOSYS;
+
+    pthread_mutex_lock(&adev->lock);
+    if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ && !in->standby &&
+            !in->capture_started && in->pcm != NULL) {
+        if (!in->capture_started) {
+            ret = start_input_stream(in);
+            if (ret == 0) {
+                in->capture_started = true;
+            }
+        }
+    }
+    pthread_mutex_unlock(&adev->lock);
+    return ret;
 }
 
-static int __unused in_stop(const struct audio_stream_in* stream __unused)
+static int in_stop(const struct audio_stream_in* stream)
 {
-    return -ENOSYS;
+    struct stream_in *in = (struct stream_in *)stream;
+    struct audio_device *adev = in->dev;
+
+    int ret = -ENOSYS;
+    pthread_mutex_lock(&adev->lock);
+    if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ && !in->standby &&
+            in->capture_started && in->pcm != NULL) {
+        pcm_stop(in->pcm);
+        ret = stop_input_stream(in);
+        in->capture_started = false;
+    }
+    pthread_mutex_unlock(&adev->lock);
+    return ret;
+}
+
+static int in_create_mmap_buffer(const struct audio_stream_in *stream,
+                                  int32_t min_size_frames,
+                                  struct audio_mmap_buffer_info *info)
+{
+    struct stream_in *in = (struct stream_in *)stream;
+    struct audio_device *adev = in->dev;
+    int ret = 0;
+    unsigned int offset1;
+    unsigned int frames1;
+    const char *step = "";
+    uint32_t buffer_size;
+
+    lock_input_stream(in);
+    pthread_mutex_lock(&adev->lock);
+    ALOGE("%s in %p", __func__, in);
+
+    if (info == NULL || min_size_frames == 0) {
+        ALOGE("%s invalid argument info %p min_size_frames %d", __func__, info, min_size_frames);
+        ret = -EINVAL;
+        goto exit;
+    }
+    if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ || !in->standby) {
+        ALOGE("%s: inflgas = %d, standby = %d", __func__, in->flags, in->standby);
+        ALOGV("%s in %p", __func__, in);
+        ret = -ENOSYS;
+        goto exit;
+    }
+
+    adjust_mmap_period_count(&in->config, min_size_frames);
+
+    ALOGV("%s: Opening PCM device card_id(%d) device_id(%d), channels %d",
+          __func__, adev->snd_card, in->pcm_device_id, in->config.channels);
+    if (in->pcm) {
+        pcm_close(in->pcm);
+        in->pcm = NULL;
+    }
+    in->pcm = pcm_open(adev->snd_card, in->pcm_device_id,
+                       (PCM_IN | PCM_MMAP | PCM_NOIRQ | PCM_MONOTONIC), &in->config);
+    if (in->pcm == NULL || !pcm_is_ready(in->pcm)) {
+        step = "open";
+        ret = -ENODEV;
+        goto exit;
+    }
+    ret = pcm_mmap_begin(in->pcm, &info->shared_memory_address, &offset1, &frames1);
+    if (ret < 0)  {
+        step = "begin";
+        goto exit;
+    }
+    info->buffer_size_frames = pcm_get_buffer_size(in->pcm);
+    buffer_size = pcm_frames_to_bytes(in->pcm, info->buffer_size_frames);
+    info->burst_size_frames = in->config.period_size;
+    memset(info->shared_memory_address, 0, buffer_size);
+
+    ret = pcm_mmap_commit(in->pcm, 0, MMAP_PERIOD_SIZE);
+    if (ret < 0) {
+        step = "commit";
+        goto exit;
+    }
+
+    in->standby = false;
+    ret = 0;
+
+    ALOGV("%s: got mmap buffer address %p info->buffer_size_frames %d",
+          __func__, info->shared_memory_address, info->buffer_size_frames);
+
+exit:
+    if (ret != 0) {
+        if (in->pcm == NULL) {
+            ALOGE("%s: %s - %d", __func__, step, ret);
+        } else {
+            ALOGE("%s: %s %s", __func__, step, pcm_get_error(in->pcm));
+            pcm_close(in->pcm);
+            in->pcm = NULL;
+        }
+    }
+    pthread_mutex_unlock(&adev->lock);
+    pthread_mutex_unlock(&in->lock);
+    return ret;
+}
+
+static int in_get_mmap_position(const struct audio_stream_in *stream,
+                                  struct audio_mmap_position *position)
+{
+    int ret = 0;
+    struct stream_in *in = (struct stream_in *)stream;
+    ALOGE("%s", __func__);
+    if (position == NULL) {
+        return -EINVAL;
+    }
+    lock_input_stream(in);
+    if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ ||
+        in->pcm == NULL) {
+        ret = -ENOSYS;
+        goto exit;
+    }
+    struct timespec ts = { 0, 0 };
+    ret = pcm_mmap_get_hw_ptr(in->pcm, (unsigned int *)&position->position_frames, &ts);
+    if (ret < 0) {
+        ALOGE("%s: %s", __func__, pcm_get_error(in->pcm));
+        goto exit;
+    }
+    position->time_nanoseconds = audio_utils_ns_from_timespec(&ts);
+exit:
+    pthread_mutex_unlock(&in->lock);
+    return ret;
 }
 
 /* hw_device_t api*/
@@ -1426,7 +1832,9 @@ static int adev_set_voice_volume(struct audio_hw_device *dev, float volume)
 {
     struct audio_device *adev = (struct audio_device *)dev;
 
+    pthread_mutex_lock(&adev->lock);
     adev->voice_volume = volume;
+    pthread_mutex_unlock(&adev->lock);
     return 0;
 }
 
@@ -1438,6 +1846,16 @@ static int adev_set_master_volume(struct audio_hw_device *dev __unused,
 
 static int adev_get_master_volume(struct audio_hw_device *dev __unused,
                   float *volume __unused)
+{
+    return -ENOSYS;
+}
+
+static int adev_set_master_mute(struct audio_hw_device *dev __unused, bool muted __unused)
+{
+    return -ENOSYS;
+}
+
+static int adev_get_master_mute(struct audio_hw_device *dev __unused, bool *muted __unused)
 {
     return -ENOSYS;
 }
@@ -1596,6 +2014,13 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
 
     } else if (out->flags & AUDIO_OUTPUT_FLAG_RAW) {
 
+    } else if (out->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) {
+        out->config = pcm_config_mmap_playback;
+        out->stream.start = out_start;
+        out->stream.stop = out_stop;
+        out->stream.create_mmap_buffer = out_create_mmap_buffer;
+        out->stream.get_mmap_position = out_get_mmap_position;
+        ALOGE("%s: AUDIO_OUTPUT_FLAG_MMAP", __func__);
     } else {
         out->config = pcm_config_low_latency;
     }
@@ -1733,22 +2158,43 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 
     in->format = config->format;
 
-        if (config->sample_rate == LOW_LATENCY_CAPTURE_SAMPLE_RATE &&
-        (flags & AUDIO_INPUT_FLAG_FAST) != 0) {
+    if (config->sample_rate == LOW_LATENCY_CAPTURE_SAMPLE_RATE &&
+        (in->flags & AUDIO_INPUT_FLAG_FAST) != 0) {
         is_low_latency = true;
+
+        in->config = pcm_config_audio_capture;
+
+        frame_size = audio_stream_in_frame_size(&in->stream);
+        buffer_size = get_input_buffer_size(config->sample_rate,
+                                            config->format,
+                                            channel_count,
+                                            is_low_latency);
+        in->config.period_size = buffer_size / frame_size;
+
+        in->config.rate = config->sample_rate;
+    } else if (config->sample_rate == LOW_LATENCY_CAPTURE_SAMPLE_RATE &&
+        (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ) != 0) {
+        in->config = pcm_config_mmap_capture;
+        in->stream.start = in_start;
+        in->stream.stop = in_stop;
+        in->stream.create_mmap_buffer = in_create_mmap_buffer;
+        in->stream.get_mmap_position = in_get_mmap_position;
+        ALOGE("%s: AUDIO_INPUT_FLAG_MMAP", __func__);
+    } else {
+        in->config = pcm_config_audio_capture;
+
+        frame_size = audio_stream_in_frame_size(&in->stream);
+        buffer_size = get_input_buffer_size(config->sample_rate,
+                                            config->format,
+                                            channel_count,
+                                            is_low_latency);
+        in->config.period_size = buffer_size / frame_size;
+
+        in->config.rate = config->sample_rate;
     }
 
-    in->config = pcm_config_audio_capture;
-
-    frame_size = audio_stream_in_frame_size(&in->stream);
-    buffer_size = get_input_buffer_size(config->sample_rate,
-                        config->format,
-                        channel_count,
-                        is_low_latency);
-    in->config.period_size = buffer_size / frame_size;
-
     in->config.channels = channel_count;
-    in->config.rate = config->sample_rate;
+    in->sample_rate = in->config.rate;
 
     lock_input_stream(in);
     pthread_mutex_unlock(&in->lock);
@@ -1763,11 +2209,11 @@ static void adev_close_input_stream(struct audio_hw_device *dev __unused,
 {
     struct stream_in *in = (struct stream_in *)stream_in;
 
-    ALOGV("%s: enter", __func__);
+    ALOGV("%s", __func__);
     in_standby(&stream_in->common);
     pthread_mutex_destroy(&in->lock);
     free(stream_in);
-    ALOGV("%s: enter", __func__);
+
     return;
 
 }
@@ -2079,19 +2525,6 @@ static int adev_dump(const struct audio_hw_device *dev __unused, int fd __unused
     return 0;
 }
 
-
-static int adev_set_master_mute(struct audio_hw_device *dev __unused,
-                bool mute __unused)
-{
-    return -ENOSYS;
-}
-
-static int adev_get_master_mute(struct audio_hw_device *dev __unused,
-                bool *mute __unused)
-{
-    return -ENOSYS;
-}
-
 #ifdef USES_NXVOICE
 static bool nx_voice_prop_init(struct nx_smartvoice_config *c)
 {
@@ -2190,9 +2623,8 @@ static int period_size_is_plausible_for_low_latency(int period_size)
 static int adev_open(const struct hw_module_t* module, const char* id,
              struct hw_device_t** device)
 {
-    ALOGV("%s: enter", __func__);
-    if (strcmp(id, AUDIO_HARDWARE_INTERFACE) != 0)
-        return -EINVAL;
+    ALOGD("%s: enter", __func__);
+    if (strcmp(id, AUDIO_HARDWARE_INTERFACE) != 0) return -EINVAL;
     pthread_mutex_lock(&adev_init_lock);
     if (audio_device_ref_count != 0) {
         *device = &adev->device.common;
@@ -2204,7 +2636,7 @@ static int adev_open(const struct hw_module_t* module, const char* id,
     }
     adev = calloc(1, sizeof(struct audio_device));
 
-    pthread_mutex_init(&adev->lock, (const pthread_mutexattr_t *)NULL);
+    pthread_mutex_init(&adev->lock, (const pthread_mutexattr_t *) NULL);
 
     adev->device.common.tag = HARDWARE_DEVICE_TAG;
     adev->device.common.version = AUDIO_DEVICE_API_VERSION_2_0;
@@ -2215,6 +2647,8 @@ static int adev_open(const struct hw_module_t* module, const char* id,
     adev->device.set_voice_volume = adev_set_voice_volume;
     adev->device.set_master_volume = adev_set_master_volume;
     adev->device.get_master_volume = adev_get_master_volume;
+    adev->device.set_master_mute= adev_set_master_mute;
+    adev->device.get_master_mute= adev_get_master_mute;
     adev->device.set_mode = adev_set_mode;
     adev->device.set_mic_mute = adev_set_mic_mute;
     adev->device.get_mic_mute = adev_get_mic_mute;
@@ -2224,10 +2658,9 @@ static int adev_open(const struct hw_module_t* module, const char* id,
     adev->device.open_output_stream = adev_open_output_stream;
     adev->device.close_output_stream = adev_close_output_stream;
     adev->device.open_input_stream = adev_open_input_stream;
+
     adev->device.close_input_stream = adev_close_input_stream;
     adev->device.dump = adev_dump;
-    adev->device.set_master_mute = adev_set_master_mute;
-    adev->device.get_master_mute = adev_get_master_mute;
 
     adev->audio_route = audio_route_init(MIXER_CARD, MIXER_XML_PATH);
     if (!adev->audio_route) {
