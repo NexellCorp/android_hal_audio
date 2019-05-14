@@ -1,0 +1,165 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "4e28fad2_1fca3d11",
+        "filename": "audio_hw.c",
+        "patchSetId": 2
+      },
+      "lineNbr": 1072,
+      "author": {
+        "id": 1015389
+      },
+      "writtenOn": "2019-05-14T03:51:02Z",
+      "side": 1,
+      "message": "Remote this red space",
+      "range": {
+        "startLine": 1072,
+        "startChar": 0,
+        "endLine": 1072,
+        "endChar": 4
+      },
+      "revId": "b54127b7dd95dc29fe2fbca0f347f4fc8520c15a",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "a298276a_44435671",
+        "filename": "audio_hw.c",
+        "patchSetId": 2
+      },
+      "lineNbr": 1299,
+      "author": {
+        "id": 1015389
+      },
+      "writtenOn": "2019-05-14T03:51:02Z",
+      "side": 1,
+      "message": "ditto",
+      "range": {
+        "startLine": 1299,
+        "startChar": 18,
+        "endLine": 1299,
+        "endChar": 19
+      },
+      "revId": "b54127b7dd95dc29fe2fbca0f347f4fc8520c15a",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "8e6604b0_70823ade",
+        "filename": "audio_hw.c",
+        "patchSetId": 2
+      },
+      "lineNbr": 1302,
+      "author": {
+        "id": 1015389
+      },
+      "writtenOn": "2019-05-14T03:51:02Z",
+      "side": 1,
+      "message": "ditto",
+      "range": {
+        "startLine": 1302,
+        "startChar": 5,
+        "endLine": 1302,
+        "endChar": 9
+      },
+      "revId": "b54127b7dd95dc29fe2fbca0f347f4fc8520c15a",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "3689f141_a1014ba2",
+        "filename": "audio_hw.c",
+        "patchSetId": 2
+      },
+      "lineNbr": 1305,
+      "author": {
+        "id": 1015389
+      },
+      "writtenOn": "2019-05-14T03:51:02Z",
+      "side": 1,
+      "message": "ditto",
+      "range": {
+        "startLine": 1305,
+        "startChar": 12,
+        "endLine": 1305,
+        "endChar": 13
+      },
+      "revId": "b54127b7dd95dc29fe2fbca0f347f4fc8520c15a",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "0039c414_0039269d",
+        "filename": "audio_hw.c",
+        "patchSetId": 2
+      },
+      "lineNbr": 1311,
+      "author": {
+        "id": 1015389
+      },
+      "writtenOn": "2019-05-14T03:51:02Z",
+      "side": 1,
+      "message": "ditto",
+      "range": {
+        "startLine": 1311,
+        "startChar": 19,
+        "endLine": 1311,
+        "endChar": 20
+      },
+      "revId": "b54127b7dd95dc29fe2fbca0f347f4fc8520c15a",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "79a802e3_84055d0a",
+        "filename": "audio_hw.c",
+        "patchSetId": 2
+      },
+      "lineNbr": 1319,
+      "author": {
+        "id": 1015389
+      },
+      "writtenOn": "2019-05-14T03:51:02Z",
+      "side": 1,
+      "message": "ditto",
+      "range": {
+        "startLine": 1319,
+        "startChar": 5,
+        "endLine": 1319,
+        "endChar": 9
+      },
+      "revId": "b54127b7dd95dc29fe2fbca0f347f4fc8520c15a",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "a0e18181_f592d700",
+        "filename": "audio_hw.c",
+        "patchSetId": 2
+      },
+      "lineNbr": 1322,
+      "author": {
+        "id": 1015389
+      },
+      "writtenOn": "2019-05-14T03:51:02Z",
+      "side": 1,
+      "message": "ditto",
+      "range": {
+        "startLine": 1322,
+        "startChar": 15,
+        "endLine": 1322,
+        "endChar": 16
+      },
+      "revId": "b54127b7dd95dc29fe2fbca0f347f4fc8520c15a",
+      "serverId": "d5d70762-12d0-45a1-890d-524b12d3f735",
+      "unresolved": false
+    }
+  ]
+}
