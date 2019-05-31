@@ -623,7 +623,7 @@ int start_input_stream(struct stream_in *in)
             goto error_open;
         }
     } else {
-        unsigned int flags = PCM_OUT | PCM_MONOTONIC;
+        unsigned int flags = PCM_IN | PCM_MONOTONIC;
 
         while (1) {
             in->pcm = pcm_open(adev->snd_card, in->pcm_device_id,
@@ -1408,7 +1408,7 @@ static int in_standby(struct audio_stream *stream)
     if (!in->standby) {
         pthread_mutex_lock(&adev->lock);
         in->standby = true;
-        if (in->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) {
+        if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ) {
             do_stop = in->capture_started;
             in->capture_started = false;
         }
@@ -1563,7 +1563,7 @@ static int in_set_gain(struct audio_stream_in *stream, float gain __unused)
 {
     struct stream_in *in = (struct stream_in *)stream;
 
-    if (in->flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ)
+    if (in->flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ)
         return -ENOSYS;
 
     return 0;
