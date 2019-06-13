@@ -84,6 +84,8 @@
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
+#define _bool_str(x) ((x)?"true":"false")
+
 #ifdef USES_NXVOICE
 #define NXAUDIO_INPUT_BUFFER_SIZE       (256 * 1 * 2 * 4)
 
@@ -118,6 +120,9 @@ struct stream_out {
     pthread_mutex_t pre_lock; /* acquire before lock to avoid DOS by playback thread */
     struct pcm_config config;
     struct pcm *pcm;
+    char *bus_address;                 // Extended field. Constant after init
+    struct audio_gain gain_stage;      // Constant after init
+    float amplitude_ratio;             // Protected by this->lock
 
     int standby;
     int pcm_device_id;
@@ -151,6 +156,9 @@ struct stream_in {
     pthread_mutex_t pre_lock; /* acquire before lock to avoid DOS by capture thread */
     struct pcm_config config;
     struct pcm *pcm;
+    char *bus_address;                 // Extended field. Constant after init
+    struct audio_gain gain_stage;      // Constant after init
+    float amplitude_ratio;             // Protected by this->lock
 
     int standby;
     int pcm_device_id;
@@ -210,8 +218,6 @@ struct audio_device {
     struct mixer *mixer;
 
     audio_mode_t mode;
-    struct stream_in *active_input;
-    struct stream_out *primary_output;
 
     int *snd_dev_ref_cnt;
 
@@ -222,8 +228,11 @@ struct audio_device {
     float voice_volume;
     bool voice_mic_mute;
     bool mic_muted;
+    bool master_mute;
 
     int snd_card;
+
+    unsigned int last_patch_id;
 
 #ifdef USES_NXVOICE
     bool use_nxvoice;
@@ -583,8 +592,6 @@ int stop_input_stream(struct stream_in *in)
 
     ALOGV("%s: (%d:%d)", __func__, in->flags, in->device);
 
-    adev->active_input = NULL;
-
     adev->input_source = AUDIO_SOURCE_DEFAULT;
     adev->in_device = AUDIO_DEVICE_NONE;
     select_devices(adev);
@@ -601,8 +608,6 @@ int start_input_stream(struct stream_in *in)
     ALOGV("%s: (%d:%d)", __func__, in->flags, in->device);
 
     in->pcm_device_id = 0;
-
-    adev->active_input = in;
 
     adev->input_source = in->source;
     adev->in_device = in->device;
@@ -653,7 +658,6 @@ int start_input_stream(struct stream_in *in)
 error_open:
     stop_input_stream(in);
 
-    adev->active_input = NULL;
     ALOGW("%s: exit: status(%d)", __func__, ret);
 
     return ret;
@@ -685,7 +689,12 @@ int start_output_stream(struct stream_out *out)
 
     ALOGV("%s: (%d:%d)", __func__, out->flags, out->devices);
 
-     if (out->devices & AUDIO_DEVICE_OUT_AUX_DIGITAL) {
+    if (strcmp(out->bus_address, "bus0_media_out") == 0)
+        adev->snd_card = 0;
+    else
+        adev->snd_card = 1;
+
+    if (out->devices & AUDIO_DEVICE_OUT_AUX_DIGITAL) {
         out->pcm_device_id = out->spdif_id;
     } else
         out->pcm_device_id = 0;
@@ -1823,6 +1832,58 @@ static int adev_close(struct hw_device_t* device)
     return 0;
 }
 
+static int adev_set_audio_port_config(struct audio_hw_device *dev,
+        const struct audio_port_config *config) {
+    int ret = 0;
+    const char *bus_address = config->ext.device.address;
+
+    ALOGV("%s %s %p", __func__, bus_address, dev);
+
+    return ret;
+}
+
+static int adev_create_audio_patch(struct audio_hw_device *dev,
+        unsigned int num_sources,
+        const struct audio_port_config *sources,
+        unsigned int num_sinks,
+        const struct audio_port_config *sinks,
+        audio_patch_handle_t *handle) {
+    struct audio_device *adev = (struct audio_device *)dev;
+
+    ALOGV("%s: handle: %p", __func__, handle);
+
+    for (unsigned int i = 0; i < num_sources; i++) {
+        ALOGD("%s: source[%d] type=%d address=%s", __func__, i, sources[i].type,
+                sources[i].type == AUDIO_PORT_TYPE_DEVICE
+                ? sources[i].ext.device.address
+                : "");
+    }
+    for (unsigned int i = 0; i < num_sinks; i++) {
+        ALOGD("%s: sink[%d] type=%d address=%s", __func__, i, sinks[i].type,
+                sinks[i].type == AUDIO_PORT_TYPE_DEVICE ? sinks[i].ext.device.address
+                : "N/A");
+    }
+    if (num_sources == 1 && num_sinks == 1 &&
+            sources[0].type == AUDIO_PORT_TYPE_DEVICE &&
+            sinks[0].type == AUDIO_PORT_TYPE_DEVICE) {
+        pthread_mutex_lock(&adev->lock);
+        adev->last_patch_id += 1;
+        pthread_mutex_unlock(&adev->lock);
+        *handle = adev->last_patch_id;
+        ALOGD("%s: handle: %d", __func__, *handle);
+    }
+
+    return 0;
+}
+
+static int adev_release_audio_patch(struct audio_hw_device *dev,
+        audio_patch_handle_t handle) {
+    struct audio_device *adev = (struct audio_device *)dev;
+
+    ALOGV("%s: handle: %d %p", __func__, handle, adev);
+    return 0;
+}
+
 static int adev_init_check(const struct audio_hw_device *dev __unused)
 {
     return 0;
@@ -1852,12 +1913,22 @@ static int adev_get_master_volume(struct audio_hw_device *dev __unused,
 
 static int adev_set_master_mute(struct audio_hw_device *dev __unused, bool muted __unused)
 {
-    return -ENOSYS;
+    ALOGD("%s: %s", __func__, _bool_str(muted));
+    struct audio_device *adev = (struct audio_device *)dev;
+    pthread_mutex_lock(&adev->lock);
+    adev->master_mute = muted;
+    pthread_mutex_unlock(&adev->lock);
+    return 0;
 }
 
 static int adev_get_master_mute(struct audio_hw_device *dev __unused, bool *muted __unused)
 {
-    return -ENOSYS;
+    struct audio_device *adev = (struct audio_device *)dev;
+    pthread_mutex_lock(&adev->lock);
+    *muted = adev->master_mute;
+    pthread_mutex_unlock(&adev->lock);
+    ALOGD("%s: %s", __func__, _bool_str(*muted));
+    return 0;
 }
 
 static int adev_set_mode(struct audio_hw_device *dev __unused,
@@ -1962,7 +2033,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
                       audio_output_flags_t flags,
                       struct audio_config *config,
                       struct audio_stream_out **stream_out,
-                      const char *address __unused)
+                      const char *address)
 {
     struct audio_device *adev = (struct audio_device *)dev;
     struct stream_out *out;
@@ -2029,18 +2100,6 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         out->format = audio_format_from_pcm_format(out->config.format);
     }
     out->sample_rate = out->config.rate;
-
-    if (flags & AUDIO_OUTPUT_FLAG_PRIMARY) {
-        if (adev->primary_output == NULL)
-            adev->primary_output = out;
-        else {
-            ALOGE("%s: Primary output is already opended",
-                  __func__);
-            ret = -EEXIST;
-            goto error_open;
-        }
-    }
-
     out->stream.common.get_sample_rate = out_get_sample_rate;
     out->stream.common.set_sample_rate = out_set_sample_rate;
     out->stream.common.get_buffer_size = out_get_buffer_size;
@@ -2081,10 +2140,23 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     pthread_mutex_unlock(&out->lock);
 
     *stream_out = &out->stream;
+
+    if (address) {
+        out->bus_address = calloc(strlen(address) + 1, sizeof(char));
+        strncpy(out->bus_address, address, strlen(address));
+        /* TODO: read struct audio_gain from audio_policy_configuration */
+        out->gain_stage = (struct audio_gain) {
+            .min_value = -3200,
+            .max_value = 600,
+            .step_value = 100,
+        };
+        out->amplitude_ratio = 1.0;
+        ALOGV("%s bus:%s", __func__, out->bus_address);
+    }
+
     ALOGV("%s: exit", __func__);
     return 0;
 
-error_open:
     free(out);
     *stream_out = NULL;
     ALOGW("%s: exit: ret %d", __func__, ret);
@@ -2639,7 +2711,7 @@ static int adev_open(const struct hw_module_t* module, const char* id,
     pthread_mutex_init(&adev->lock, (const pthread_mutexattr_t *) NULL);
 
     adev->device.common.tag = HARDWARE_DEVICE_TAG;
-    adev->device.common.version = AUDIO_DEVICE_API_VERSION_2_0;
+    adev->device.common.version = AUDIO_DEVICE_API_VERSION_3_0;
     adev->device.common.module = (struct hw_module_t *)module;
     adev->device.common.close = adev_close;
 
@@ -2662,6 +2734,11 @@ static int adev_open(const struct hw_module_t* module, const char* id,
     adev->device.close_input_stream = adev_close_input_stream;
     adev->device.dump = adev_dump;
 
+    // New in AUDIO_DEVICE_API_VERSION_3_0
+    adev->device.set_audio_port_config = adev_set_audio_port_config;
+    adev->device.create_audio_patch = adev_create_audio_patch;
+    adev->device.release_audio_patch = adev_release_audio_patch;
+
     adev->audio_route = audio_route_init(MIXER_CARD, MIXER_XML_PATH);
     if (!adev->audio_route) {
         ALOGW("%s: mixer file not exist!!", __func__);
@@ -2682,8 +2759,6 @@ static int adev_open(const struct hw_module_t* module, const char* id,
 
     pthread_mutex_lock(&adev->lock);
     adev->mode = AUDIO_MODE_NORMAL;
-    adev->active_input = NULL;
-    adev->primary_output = NULL;
     adev->snd_card = 0;
     pthread_mutex_unlock(&adev->lock);
 
