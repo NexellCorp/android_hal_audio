@@ -1925,23 +1925,35 @@ static int adev_get_master_volume(struct audio_hw_device *dev __unused,
     return -ENOSYS;
 }
 
-static int adev_set_master_mute(struct audio_hw_device *dev __unused, bool muted __unused)
+static int adev_set_master_mute(struct audio_hw_device *dev, bool muted)
 {
-    ALOGD("%s: %s", __func__, _bool_str(muted));
     struct audio_device *adev = (struct audio_device *)dev;
+    char output_route[30];
+
+    ALOGV("%s: %s", __func__, _bool_str(muted));
+
     pthread_mutex_lock(&adev->lock);
+    sprintf(output_route, "master-mute_%s", _bool_str(muted));
+    audio_route_apply_path(adev->audio_route, (const char *)output_route);
+    audio_route_update_mixer(adev->audio_route);
+    audio_route_apply_path(adev->audio_route2, (const char *)output_route);
+    audio_route_update_mixer(adev->audio_route2);
     adev->master_mute = muted;
     pthread_mutex_unlock(&adev->lock);
+
+    ALOGV("%s %s", __func__, output_route);
+
     return 0;
 }
 
-static int adev_get_master_mute(struct audio_hw_device *dev __unused, bool *muted __unused)
+static int adev_get_master_mute(struct audio_hw_device *dev, bool *muted)
 {
     struct audio_device *adev = (struct audio_device *)dev;
+
     pthread_mutex_lock(&adev->lock);
     *muted = adev->master_mute;
     pthread_mutex_unlock(&adev->lock);
-    ALOGD("%s: %s", __func__, _bool_str(*muted));
+    ALOGV("%s: %s", __func__, _bool_str(*muted));
     return 0;
 }
 
