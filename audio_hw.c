@@ -222,6 +222,7 @@ struct audio_device {
     int *snd_dev_ref_cnt;
 
     struct audio_route *audio_route;
+    struct audio_route *audio_route2;
     audio_source_t input_source;
     int cur_route_id;
 
@@ -1817,6 +1818,7 @@ static int adev_close(struct hw_device_t* device)
 
     if ((--audio_device_ref_count) == 0) {
         audio_route_free(adev->audio_route);
+        audio_route_free(adev->audio_route2);
 #ifdef USES_NXVOICE
         if (adev->use_nxvoice) {
             nx_voice_stop(adev->nxvoice_handle);
@@ -1835,10 +1837,22 @@ static int adev_close(struct hw_device_t* device)
 static int adev_set_audio_port_config(struct audio_hw_device *dev,
         const struct audio_port_config *config) {
     int ret = 0;
+    struct audio_device *adev = (struct audio_device *)dev;
     const char *bus_address = config->ext.device.address;
+    char output_route[30];
 
     ALOGV("%s %s %p", __func__, bus_address, dev);
 
+    sprintf(output_route, "volume_%d", config->gain.values[0]);
+    if (strcmp(bus_address, "bus0_media_out") == 0) {
+        audio_route_apply_path(adev->audio_route, (const char *)output_route);
+        audio_route_update_mixer(adev->audio_route);
+    } else {
+        audio_route_apply_path(adev->audio_route2, (const char *)output_route);
+        audio_route_update_mixer(adev->audio_route2);
+    }
+
+    ALOGV("%s %s", __func__, output_route);
     return ret;
 }
 
@@ -2754,6 +2768,23 @@ static int adev_open(const struct hw_module_t* module, const char* id,
         ALOGD("mixer file exist");
 #endif
     }
+
+    adev->audio_route2 = audio_route_init(MIXER_CARD+1, MIXER_XML_PATH);
+    if (!adev->audio_route2) {
+        ALOGW("%s: mixer file not exist!!", __func__);
+#ifdef QUICKBOOT
+        while (1) {
+            adev->audio_route2 = audio_route_init(MIXER_CARD+1, MIXER_XML_PATH);
+            if (!adev->audio_route2) {
+                usleep(100000);
+            } else {
+                break;
+            }
+        }
+        ALOGD("mixer file exist");
+#endif
+    }
+
     /* adev->cur_route_id initial value is 0 and such that first device
      * selection is always applied by select_devices() */
 
