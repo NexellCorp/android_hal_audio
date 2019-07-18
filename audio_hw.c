@@ -63,7 +63,7 @@
 #define DEFAULT_OUTPUT_PERIOD_COUNT 4
 
 #define DEEP_BUFFER_OUTPUT_PERIOD_SIZE 1920
-#define DEEP_BUFFER_OUTPUT_PERIOD_COUNT 2
+#define DEEP_BUFFER_OUTPUT_PERIOD_COUNT 4
 #define LOW_LATENCY_OUTPUT_PERIOD_SIZE 240
 #define LOW_LATENCY_OUTPUT_PERIOD_COUNT 2
 
@@ -313,9 +313,9 @@ struct pcm_config pcm_config_mmap_capture = {
 };
 
 struct pcm_config pcm_config_bt_sco = {
-    .channels = 2,
+    .channels = 1,
     .rate = 16000,
-    .period_size = 64,
+    .period_size = 128,
     .period_count = 8,
     .format = PCM_FORMAT_S16_LE,
 };
