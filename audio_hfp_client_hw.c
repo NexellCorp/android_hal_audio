@@ -6,7 +6,14 @@
  **  Proprietary and confidential.
  **
  *****************************************************************************/
-#define SET_SCHED_PRIO
+
+#define LOG_TAG "audio_hfp_client_hw"
+//#define LOG_NDEBUG 0
+
+#include <stdlib.h>
+#include <pthread.h>
+
+#include <hardware/audio_alsaops.h>
 
 #ifdef SET_SCHED_PRIO
 #include <sys/prctl.h>
@@ -14,6 +21,8 @@
 #include <utils/ThreadDefs.h>
 #include <cutils/sched_policy.h>
 #endif
+
+#include "audio_hw.h"
 
 int thread_exit;
 
@@ -24,9 +33,10 @@ struct pcm *sco_out = NULL, *voice_in = NULL;
 struct pcm *voice_out = NULL, *sco_in = NULL;
 
 // tx
-static void* thread_voice()
+static void* thread_voice(void *dev)
 {
-    struct pcm_config config;
+    struct audio_device *adev = (struct audio_device *)dev;
+    struct pcm_config config = adev->hfp_pcm_config;
     int size;
     char *buffer = NULL;
     int ret = 0;
@@ -36,8 +46,6 @@ static void* thread_voice()
     set_sched_policy(0, SP_AUDIO_SYS);
     setpriority(PRIO_PROCESS, 0, ANDROID_PRIORITY_URGENT_AUDIO);
 #endif
-
-    config = pcm_config_bt_sco;
 
     ALOGD("in %s", __func__);
 
@@ -69,6 +77,11 @@ static void* thread_voice()
                 ALOGE("%s: failed to voice_in pcm_read(%d : %s)", __func__, errno, pcm_get_error(voice_in));
             continue;
         }
+
+        if (adev->voice_mic_mute) {
+            memset(buffer, 0, size);
+        }
+
         ret = pcm_write(sco_out, buffer, size);
         if (ret) {
             if (errno != EBADFD)
@@ -89,9 +102,10 @@ exit:
 }
 
 // rx
-static void* thread_sco()
+static void* thread_sco(void *dev)
 {
-    struct pcm_config config;
+    struct audio_device *adev = (struct audio_device *)dev;
+    struct pcm_config config = adev->hfp_pcm_config;
     int size;
     char *buffer = NULL;
     int ret = 0;
@@ -102,11 +116,10 @@ static void* thread_sco()
     setpriority(PRIO_PROCESS, 0, ANDROID_PRIORITY_URGENT_AUDIO);
 #endif
 
-    config = pcm_config_bt_sco;
-
     ALOGD("in %s", __func__);
 
     size = config.period_size * 2 * config.channels;
+
     voice_out = pcm_open(SND_BT_CARD_ID, SND_BT_DEVICE_ID, PCM_OUT | PCM_MONOTONIC, &config);
     if (!voice_out || !pcm_is_ready(voice_out)) {
         ALOGE("%s: unable to open voice_out PCM device(%s)",
@@ -151,7 +164,7 @@ exit:
     pthread_exit(&ret);
 }
 
-void start_bt_sco()
+void start_bt_sco(struct audio_device *adev)
 {
 #ifdef SET_SCHED_PRIO
     pthread_attr_t attr1, attr2;
@@ -173,8 +186,8 @@ void start_bt_sco()
     pthread_attr_setdetachstate(&attr1, PTHREAD_CREATE_JOINABLE);
     pthread_attr_setdetachstate(&attr2, PTHREAD_CREATE_JOINABLE);
 
-    pthread_create(&t_voice, &attr1, thread_voice, NULL);
-    pthread_create(&t_sco, &attr2, thread_sco, NULL);
+    pthread_create(&t_voice, &attr1, thread_voice, (void *)adev);
+    pthread_create(&t_sco, &attr2, thread_sco, (void *)adev);
 
     pthread_getschedparam(t_voice, &policy1, &param1);
     pthread_getschedparam(t_sco, &policy2, &param2);
@@ -188,14 +201,14 @@ void start_bt_sco()
     pthread_attr_destroy(&attr1);
     pthread_attr_destroy(&attr2);
 #else
-    pthread_create(&t_voice, NULL, thread_voice, NULL);
-    pthread_create(&t_sco, NULL, thread_sco, NULL);
+    pthread_create(&t_voice, NULL, thread_voice, (void *)adev);
+    pthread_create(&t_sco, NULL, thread_sco, (void *)adev);
 #endif
 
     ALOGI("%s: exit %d", __func__, __LINE__);
 }
 
-void stop_bt_sco()
+void stop_bt_sco(void)
 {
     int status;
     int rc;
