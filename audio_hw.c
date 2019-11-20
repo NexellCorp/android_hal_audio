@@ -2077,6 +2077,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
             } else {
                 ALOGI("device format is %s %d\n", p, i);
             }
+            close(fd);
         }
         out->config = pcm_config_hdmi;
     } else if (out->flags & AUDIO_OUTPUT_FLAG_DEEP_BUFFER) {
