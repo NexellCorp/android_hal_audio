@@ -1495,11 +1495,13 @@ static int adev_set_parameters(struct audio_hw_device *dev,
 
 	ret = str_parms_get_str(parms, "hfp_enable", value, sizeof(value));
 	if (ret >= 0) {
-		if (strcmp(value, "true") == 0) {
+		if ((strcmp(value, "true") == 0) &&
+			(hfp_enable == false)) {
 			hfp_enable = true;
 			if (!output_streaming)
 				start_bt_sco(adev->snd_card);
-		} else {
+		} else if ((strcmp(value, "false") == 0) &&
+				   (hfp_enable == true)) {
 			hfp_enable = false;
 			stop_bt_sco();
 		}
