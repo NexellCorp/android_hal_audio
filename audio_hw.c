@@ -1974,17 +1974,20 @@ static int adev_set_parameters(struct audio_hw_device *dev,
         goto done;
     }
 
-    ret = str_parms_get_str(parms, "hfp_set_sampling_rate", value, sizeof(value));
+    ret = str_parms_get_str(parms, "hfp_set_sampling_rate",
+							value, sizeof(value));
     if (ret >= 0)
         adev->hfp_pcm_config.rate = atoi(value);
 
     ret = str_parms_get_str(parms, "hfp_enable", value, sizeof(value));
     if (ret >= 0) {
-        if (strcmp(value, "true") == 0) {
+        if ((strcmp(value, "true") == 0) &&
+			(adev->hfp_enable == false)) {
             adev->hfp_enable = true;
             if (!adev->output_streaming)
                 start_bt_sco(adev);
-        } else {
+        } else if ((strcmp(value, "false") == 0) &&
+				   (adev->hfp_enable == true)) {
             adev->hfp_enable = false;
             stop_bt_sco();
         }
