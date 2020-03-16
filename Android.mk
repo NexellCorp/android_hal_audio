@@ -49,8 +49,8 @@ LOCAL_CFLAGS += -DUSES_NXVOICE
 LOCAL_SHARED_LIBRARIES += \
     libnxvoice
 LOCAL_C_INCLUDES += \
-    device/nexell/library/include \
-    device/nexell/library/nx-smartvoice
+    vendor/nexell/library/include \
+    vendor/nexell/library/nx-smartvoice
 endif
 
 ifneq ($(filter pvo,$(SVOICE_ECNR_VENDOR)),)
@@ -58,14 +58,14 @@ LOCAL_SHARED_LIBRARIES += \
     libpvo \
     libpovosource
 LOCAL_C_INCLUDES += \
-    device/nexell/library/libpowervoice
+    vendor/nexell/library/libpowervoice
 endif
 
 ifneq ($(filter mwsr,$(SVOICE_ECNR_VENDOR)),)
 LOCAL_SHARED_LIBRARIES += \
     libmwsr
 LOCAL_C_INCLUDES += \
-    device/nexell/library/libmwsr
+    vendor/nexell/library/libmwsr
 endif
 
 ifeq ($(QUICKBOOT), 1)
