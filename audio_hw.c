@@ -491,7 +491,7 @@ static void select_devices(struct audio_device *adev)
     const char *input_route = NULL;
     int new_route_id;
 
-    ALOGV("%s: enter >> %d : %d", __func__, output_device_id, input_source_id);
+    ALOGV("%s: enter >> %d : %d(%x)", __func__, output_device_id, input_source_id, adev->in_device);
 
     if (!adev->audio_route)
         goto err_route;
@@ -553,7 +553,7 @@ int stop_input_stream(struct stream_in *in)
     int ret = 0;
     struct audio_device *adev = in->dev;
 
-    ALOGV("%s: (%d:%d)", __func__, in->flags, in->device);
+    ALOGV("%s: (%d:%x)", __func__, in->flags, in->device);
 
     adev->input_source = AUDIO_SOURCE_DEFAULT;
     adev->in_device = AUDIO_DEVICE_NONE;
@@ -568,7 +568,7 @@ int start_input_stream(struct stream_in *in)
     int ret = 0;
     struct audio_device *adev = in->dev;
 
-    ALOGV("%s: (%d:%d)", __func__, in->flags, in->device);
+    ALOGV("%s: (%d:%x)", __func__, in->flags, in->device);
 
     in->pcm_device_id = 0;
 
@@ -1470,7 +1470,7 @@ static int in_set_parameters(struct audio_stream *stream, const char
                 sizeof(value));
 
     if (ret >= 0) {
-        val = atoi(value);
+        val = atoi(value) & ~AUDIO_DEVICE_BIT_IN;
         if (((int)in->device != val) && (val != 0)) {
             in->device = val;
             /* If recording is in progress, change the tx device to new device */
@@ -2223,7 +2223,8 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
     in->stream.get_capture_position = in_get_capture_position;
 
     in->source = source;
-    in->device = devices;
+    /* strip AUDIO_DEVICE_BIT_IN to allow bitwise comparisons */
+    in->device = devices & ~AUDIO_DEVICE_BIT_IN;
     in->dev = adev;
     in->standby = 1;
     in->channel_mask = config->channel_mask;
@@ -2408,7 +2409,7 @@ nxvoice_in_set_parameters(struct audio_stream *stream, const char *kv_pairs)
                 sizeof(value));
 
     if (ret >= 0) {
-        val = atoi(value);
+        val = atoi(value) & ~AUDIO_DEVICE_BIT_IN;
         if (((int)in->device != val) && (val != 0)) {
             in->device = val;
             /* If recording is in progress, change the tx device to new device */
