@@ -663,8 +663,10 @@ int start_output_stream(struct stream_out *out)
 
     if (strcmp(out->bus_address, "bus0_media_out") == 0)
         adev->snd_card = 0;
-    else
+    else if (strcmp(out->bus_address, "bus1_navigation_out") == 0)
         adev->snd_card = 1;
+    else
+        adev->snd_card = 0;
 
     if (out->devices & AUDIO_DEVICE_OUT_AUX_DIGITAL) {
         out->pcm_device_id = out->spdif_id;
